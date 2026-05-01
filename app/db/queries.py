@@ -1552,7 +1552,7 @@ AUTHENTICATE_CLIENTE_USER = """
         dclave AS contrasena,
         ctraba AS codigo_trabajador
     FROM usuarios_web00
-    WHERE cusuar = ? AND ssuper = 'S';
+    WHERE cusuar = ?;
 """
 
 # Obtener datos completos del usuario desde usuarios_web00 y mtraba_web00 para crear registro
