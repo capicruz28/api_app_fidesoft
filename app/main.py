@@ -23,7 +23,7 @@ def create_application() -> FastAPI:
         title=settings.PROJECT_NAME,
         version=settings.VERSION,
         description=settings.DESCRIPTION,
-        root_path="/api",
+        root_path="/apivac",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
