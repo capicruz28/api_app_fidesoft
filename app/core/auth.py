@@ -25,7 +25,7 @@ from app.schemas.auth import TokenPayload
 logger = logging.getLogger(__name__)
 
 # Swagger/OpenAPI: flujo password con tokenUrl en /api/v1
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login/")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="apivac/v1/auth/login/")
 
 
 def create_access_token(data: dict) -> str:
