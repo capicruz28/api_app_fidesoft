@@ -15,7 +15,7 @@ from app.schemas.vacaciones_permisos import (
     SolicitudCreate, SolicitudUpdate, SolicitudRead, SolicitudReadFull,
     AprobacionRead, AprobacionUpdate, AprobacionResponse,
     NotificacionRead, PaginatedNotificacionResponse,
-    SaldoVacacionesRead, CatalogosResponse, CatalogoItem,
+    SaldoVacacionesRead, CatalogosResponse, CatalogoItem, CatalogoPermisoItem,
     PaginatedSolicitudResponse, TrabajadorRead, PaginatedTrabajadorResponse,
     BoletaPagoResponse, BoletasPagoResponse, CertificadoCTSResponse, CertificadosCTSResponse,
     DocumentosEmpresaResponse, AvisosEmpresaResponse
@@ -627,7 +627,7 @@ async def obtener_catalogos(
             areas=[CatalogoItem(**item) for item in catalogos['areas']],
             secciones=[CatalogoItem(**item) for item in catalogos['secciones']],
             cargos=[CatalogoItem(**item) for item in catalogos['cargos']],
-            tipos_permiso=[CatalogoItem(**item) for item in catalogos['tipos_permiso']]
+            tipos_permiso=[CatalogoPermisoItem(**item) for item in catalogos['tipos_permiso']]
         )
         
     except HTTPException:

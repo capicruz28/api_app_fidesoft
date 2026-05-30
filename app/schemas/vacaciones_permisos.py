@@ -8,9 +8,24 @@ y configuraciones del sistema.
 """
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Optional, List
-from datetime import datetime, date
+from typing import Optional, List, Literal, Union
+from datetime import datetime, date, time
 from decimal import Decimal
+
+
+def _parse_time_value(v: Union[str, time, None]) -> Optional[time]:
+    """Convierte string HH:MM o HH:MM:SS a time; None se conserva."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, time):
+        return v
+    s = str(v).strip()
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(s, fmt).time()
+        except ValueError:
+            continue
+    raise ValueError(f"Hora inválida: {v}")
 
 
 # ============================================
@@ -27,6 +42,8 @@ class SolicitudBase(BaseModel):
     dias_solicitados: Optional[Decimal] = Field(None, description="Días solicitados (calculado)")
     observacion: Optional[str] = Field(None, max_length=500, description="Observaciones/comentarios")
     motivo: Optional[str] = Field(None, max_length=2, description="Código de motivo (opcional)")
+    hora_inicio: Optional[time] = Field(None, description="Hora inicio (permiso por horas)")
+    hora_fin: Optional[time] = Field(None, description="Hora fin (permiso por horas)")
 
     @field_validator('tipo_solicitud')
     @classmethod
@@ -35,10 +52,18 @@ class SolicitudBase(BaseModel):
             raise ValueError('tipo_solicitud debe ser V (Vacaciones) o P (Permiso)')
         return v.upper()
 
+    @field_validator('hora_inicio', 'hora_fin', mode='before')
+    @classmethod
+    def parse_horas(cls, v):
+        return _parse_time_value(v)
+
     @model_validator(mode='after')
-    def validar_fechas(self):
+    def validar_fechas_y_vacaciones_sin_horas(self):
         if self.fecha_fin < self.fecha_inicio:
             raise ValueError('fecha_fin debe ser mayor o igual a fecha_inicio')
+        if self.tipo_solicitud == 'V':
+            if self.hora_inicio is not None or self.hora_fin is not None:
+                raise ValueError('Las solicitudes de vacaciones no admiten hora_inicio ni hora_fin')
         return self
 
 
@@ -163,8 +188,15 @@ class SolicitudUpdate(BaseModel):
     """Schema para actualizar una solicitud (solo pendientes)"""
     fecha_inicio: Optional[date] = Field(None, description="Fecha inicio")
     fecha_fin: Optional[date] = Field(None, description="Fecha fin")
+    hora_inicio: Optional[time] = Field(None, description="Hora inicio (permiso por horas)")
+    hora_fin: Optional[time] = Field(None, description="Hora fin (permiso por horas)")
     observacion: Optional[str] = Field(None, max_length=500, description="Observaciones")
     motivo: Optional[str] = Field(None, max_length=2, description="Código de motivo")
+
+    @field_validator('hora_inicio', 'hora_fin', mode='before')
+    @classmethod
+    def parse_horas_update(cls, v):
+        return _parse_time_value(v)
 
 
 class SolicitudAnular(BaseModel):
@@ -210,7 +242,14 @@ class SolicitudRead(BaseModel):
     codigo_trabajador: str
     fecha_inicio: date
     fecha_fin: date
-    dias_solicitados: Optional[Decimal]
+    hora_inicio: Optional[time] = None
+    hora_fin: Optional[time] = None
+    dias_solicitados: Optional[Decimal] = None
+    horas_solicitadas: Optional[Decimal] = None
+    tiempo: Optional[Literal['D', 'H']] = Field(
+        None,
+        description="D=Día, H=Hora (vacaciones siempre D)",
+    )
     observacion: Optional[str]
     motivo: Optional[str]
     estado: str
@@ -230,7 +269,8 @@ class SolicitudRead(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat() if v else None,
             date: lambda v: v.isoformat() if v else None,
-            Decimal: lambda v: float(v) if v else None
+            time: lambda v: v.strftime("%H:%M:%S") if v else None,
+            Decimal: lambda v: float(v) if v is not None else None,
         }
 
 
@@ -405,12 +445,25 @@ class CatalogoItem(BaseModel):
     descripcion: str
 
 
+class CatalogoPermisoItem(CatalogoItem):
+    """Tipo de permiso con unidad de tiempo del catálogo (ctiempo)."""
+    tiempo: str = Field(..., description="D=Día, H=Hora")
+
+    @field_validator('tiempo')
+    @classmethod
+    def validar_tiempo(cls, v: str) -> str:
+        v = (v or "").strip().upper()
+        if v not in ('D', 'H'):
+            raise ValueError('tiempo debe ser D (Día) o H (Hora)')
+        return v
+
+
 class CatalogosResponse(BaseModel):
     """Schema para respuesta de catálogos"""
     areas: List[CatalogoItem]
     secciones: List[CatalogoItem]
     cargos: List[CatalogoItem]
-    tipos_permiso: List[CatalogoItem]
+    tipos_permiso: List[CatalogoPermisoItem]
 
 
 class AprobacionResponse(BaseModel):

@@ -10,7 +10,7 @@ Este servicio maneja toda la lógica de negocio relacionada con:
 - Configuración de flujos y jerarquías
 """
 
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, time, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Any, Tuple
 import logging
@@ -39,7 +39,7 @@ from app.db.queries import (
     # Saldos y catálogos
     SELECT_SALDO_VACACIONES, SELECT_TRABAJADOR_BY_CODIGO,
     SELECT_CATALOGO_AREAS, SELECT_CATALOGO_SECCIONES, SELECT_CATALOGO_CARGOS,
-    SELECT_CATALOGO_TIPOS_PERMISO,
+    SELECT_CATALOGO_TIPOS_PERMISO, SELECT_TIPO_PERMISO_BY_CODIGO,
     SELECT_CUMPLEANOS_HOY, COUNT_CUMPLEANOS_HOY, SELECT_TRABAJADORES_PAGINATED, COUNT_TRABAJADORES,
     # Estadísticas
     SELECT_ESTADISTICAS_SOLICITUDES, SELECT_SOLICITUDES_POR_MES, SELECT_ALL_SALDOS_VACACIONES
@@ -98,6 +98,100 @@ class VacacionesPermisosService(BaseService):
         return Decimal(str(dias))
 
     @staticmethod
+    def calcular_horas_solicitadas(hora_inicio: time, hora_fin: time) -> Decimal:
+        """Calcula horas decimales entre dos horas del mismo día."""
+        inicio_min = hora_inicio.hour * 60 + hora_inicio.minute + hora_inicio.second / 60
+        fin_min = hora_fin.hour * 60 + hora_fin.minute + hora_fin.second / 60
+        if fin_min <= inicio_min:
+            raise ValidationError(
+                detail="hora_fin debe ser posterior a hora_inicio",
+                internal_code="PERMISO_HORA_RANGO_INVALIDO",
+            )
+        horas = round((fin_min - inicio_min) / 60, 2)
+        return Decimal(str(horas))
+
+    @staticmethod
+    def resolver_modo_tiempo(tipo_solicitud: str, codigo_permiso: Optional[str]) -> str:
+        """
+        Resuelve D (día) o H (hora) según tipo de solicitud y catálogo de permisos.
+        Vacaciones siempre D. Registros históricos sin hora se tratan como D.
+        """
+        if tipo_solicitud == 'V':
+            return 'D'
+        if not codigo_permiso:
+            raise ValidationError(
+                detail="codigo_permiso es obligatorio para permisos",
+                internal_code="PERMISO_CODIGO_REQUERIDO",
+            )
+        row = execute_query(SELECT_TIPO_PERMISO_BY_CODIGO, (codigo_permiso,))
+        if not row:
+            raise ValidationError(
+                detail=f"Tipo de permiso '{codigo_permiso}' no encontrado en el catálogo",
+                internal_code="PERMISO_CATALOGO_INVALIDO",
+            )
+        tiempo = (row[0].get('tiempo') or '').strip().upper()
+        if tiempo not in ('D', 'H'):
+            raise ValidationError(
+                detail=f"Tipo de permiso '{codigo_permiso}' sin ctiempo válido (D/H)",
+                internal_code="PERMISO_CATALOGO_INVALIDO",
+            )
+        return tiempo
+
+    @staticmethod
+    def _resolver_tiempo_solicitud(solicitud: Dict[str, Any]) -> str:
+        """Inferencia de modo tiempo para lectura (compatibilidad histórica)."""
+        if solicitud.get('tipo_solicitud') == 'V':
+            return 'D'
+        if solicitud.get('hora_inicio') is not None:
+            return 'H'
+        tc = solicitud.get('tiempo_catalogo') or solicitud.get('tiempo')
+        if isinstance(tc, str) and tc.strip().upper() in ('D', 'H'):
+            return tc.strip().upper()
+        return 'D'
+
+    @staticmethod
+    def _enriquecer_solicitud(solicitud: Dict[str, Any]) -> Dict[str, Any]:
+        solicitud['tiempo'] = VacacionesPermisosService._resolver_tiempo_solicitud(solicitud)
+        return solicitud
+
+    @staticmethod
+    def validar_campos_segun_modo(
+        modo: str,
+        tipo_solicitud: str,
+        fecha_inicio: date,
+        fecha_fin: date,
+        hora_inicio: Optional[time],
+        hora_fin: Optional[time],
+    ) -> None:
+        if modo == 'H':
+            if fecha_inicio != fecha_fin:
+                raise ValidationError(
+                    detail="Permiso por horas: fecha_inicio y fecha_fin deben ser el mismo día",
+                    internal_code="PERMISO_HORA_MISMO_DIA",
+                )
+            if hora_inicio is None or hora_fin is None:
+                raise ValidationError(
+                    detail="Permiso por horas: hora_inicio y hora_fin son obligatorias",
+                    internal_code="PERMISO_HORA_REQUERIDAS",
+                )
+            if hora_fin <= hora_inicio:
+                raise ValidationError(
+                    detail="hora_fin debe ser posterior a hora_inicio",
+                    internal_code="PERMISO_HORA_RANGO_INVALIDO",
+                )
+        else:
+            if hora_inicio is not None or hora_fin is not None:
+                raise ValidationError(
+                    detail="Permiso por días o vacaciones: no envíe hora_inicio ni hora_fin",
+                    internal_code="PERMISO_DIA_SIN_HORAS",
+                )
+        if tipo_solicitud == 'V' and (hora_inicio is not None or hora_fin is not None):
+            raise ValidationError(
+                detail="Las solicitudes de vacaciones no admiten horas",
+                internal_code="VACACIONES_SIN_HORAS",
+            )
+
+    @staticmethod
     @BaseService.handle_service_errors
     async def validar_saldo_suficiente(
         codigo_trabajador: str,
@@ -148,39 +242,71 @@ class VacacionesPermisosService(BaseService):
 
     @staticmethod
     @BaseService.handle_service_errors
+    async def validar_sin_solapamiento(
+        codigo_trabajador: str,
+        fecha_inicio: date,
+        fecha_fin: date,
+        modo: str,
+        hora_inicio: Optional[time] = None,
+        hora_fin: Optional[time] = None,
+        id_solicitud_excluir: Optional[int] = None,
+    ) -> None:
+        """
+        Valida solapamiento con solicitudes activas (P o A).
+        Rama día: cruce de fechas si al menos uno es por día.
+        Rama hora: mismo criterio de fechas más cruce de horas si ambos son por hora.
+        """
+        nueva_es_hora = 1 if modo == 'H' else 0
+        resultado = execute_query(
+            COUNT_SOLICITUDES_SOLAPADAS,
+            (
+                codigo_trabajador,
+                id_solicitud_excluir,
+                id_solicitud_excluir,
+                nueva_es_hora,
+                fecha_fin,
+                fecha_inicio,
+                nueva_es_hora,
+                fecha_fin,
+                fecha_inicio,
+                hora_fin if modo == 'H' else None,
+                hora_inicio if modo == 'H' else None,
+            ),
+        )
+        total = int(resultado[0]['total']) if resultado else 0
+        if total > 0:
+            detail = (
+                "Ya existe una solicitud pendiente o aprobada que se cruza "
+                "con el rango de horas indicado."
+                if modo == 'H'
+                else (
+                    "Ya existe una solicitud pendiente o aprobada que se cruza "
+                    "con el rango de fechas indicado."
+                )
+            )
+            code = (
+                "SOLICITUD_HORAS_SOLAPADAS"
+                if modo == 'H'
+                else "SOLICITUD_FECHAS_SOLAPADAS"
+            )
+            raise ValidationError(detail=detail, internal_code=code)
+
+    @staticmethod
+    @BaseService.handle_service_errors
     async def validar_sin_solapamiento_fechas(
         codigo_trabajador: str,
         fecha_inicio: date,
         fecha_fin: date,
         id_solicitud_excluir: Optional[int] = None,
     ) -> None:
-        """
-        Valida que no existan solicitudes activas (P o A) que se crucen con el rango indicado.
-
-        Condición de solapamiento:
-        (NuevaFechaInicio <= FinExistente) AND (NuevaFechaFin >= InicioExistente)
-
-        Aplica a vacaciones y permisos del mismo trabajador (Opción A).
-        """
-        resultado = execute_query(
-            COUNT_SOLICITUDES_SOLAPADAS,
-            (
-                codigo_trabajador,
-                fecha_fin,
-                fecha_inicio,
-                id_solicitud_excluir,
-                id_solicitud_excluir,
-            ),
+        """Compatibilidad: asume modo día."""
+        await VacacionesPermisosService.validar_sin_solapamiento(
+            codigo_trabajador=codigo_trabajador,
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            modo='D',
+            id_solicitud_excluir=id_solicitud_excluir,
         )
-        total = int(resultado[0]['total']) if resultado else 0
-        if total > 0:
-            raise ValidationError(
-                detail=(
-                    "Ya existe una solicitud pendiente o aprobada que se cruza "
-                    "con el rango de fechas indicado."
-                ),
-                internal_code="SOLICITUD_FECHAS_SOLAPADAS",
-            )
 
     # ============================================
     # MÉTODOS DE SOLICITUDES
@@ -212,40 +338,67 @@ class VacacionesPermisosService(BaseService):
             Dict: Datos de la solicitud creada
         """
         try:
-            # 1. Calcular días solicitados
-            dias_solicitados = VacacionesPermisosService.calcular_dias_solicitados(
-                solicitud_data.fecha_inicio,
-                solicitud_data.fecha_fin
+            modo = VacacionesPermisosService.resolver_modo_tiempo(
+                solicitud_data.tipo_solicitud,
+                solicitud_data.codigo_permiso,
+            )
+            VacacionesPermisosService.validar_campos_segun_modo(
+                modo=modo,
+                tipo_solicitud=solicitud_data.tipo_solicitud,
+                fecha_inicio=solicitud_data.fecha_inicio,
+                fecha_fin=solicitud_data.fecha_fin,
+                hora_inicio=solicitud_data.hora_inicio,
+                hora_fin=solicitud_data.hora_fin,
             )
 
-            # 2. Validar solapamiento con solicitudes activas (V o P)
-            await VacacionesPermisosService.validar_sin_solapamiento_fechas(
+            hora_inicio_db: Optional[time] = None
+            hora_fin_db: Optional[time] = None
+            horas_solicitadas: Optional[Decimal] = None
+
+            if modo == 'H':
+                dias_solicitados = Decimal('0')
+                hora_inicio_db = solicitud_data.hora_inicio
+                hora_fin_db = solicitud_data.hora_fin
+                horas_solicitadas = VacacionesPermisosService.calcular_horas_solicitadas(
+                    hora_inicio_db, hora_fin_db
+                )
+            else:
+                dias_solicitados = VacacionesPermisosService.calcular_dias_solicitados(
+                    solicitud_data.fecha_inicio,
+                    solicitud_data.fecha_fin,
+                )
+
+            await VacacionesPermisosService.validar_sin_solapamiento(
                 codigo_trabajador=solicitud_data.codigo_trabajador,
                 fecha_inicio=solicitud_data.fecha_inicio,
                 fecha_fin=solicitud_data.fecha_fin,
+                modo=modo,
+                hora_inicio=hora_inicio_db,
+                hora_fin=hora_fin_db,
             )
-            
-            # 3. Validar saldo si es vacación
+
             if solicitud_data.tipo_solicitud == 'V':
                 await VacacionesPermisosService.validar_saldo_suficiente(
                     solicitud_data.codigo_trabajador,
                     dias_solicitados,
-                    solicitud_data.tipo_solicitud
+                    solicitud_data.tipo_solicitud,
                 )
-            
-            # 4. Insertar solicitud
+
             params = (
                 solicitud_data.tipo_solicitud,
                 solicitud_data.codigo_permiso,
                 solicitud_data.codigo_trabajador,
                 solicitud_data.fecha_inicio,
                 solicitud_data.fecha_fin,
+                hora_inicio_db,
+                hora_fin_db,
                 dias_solicitados,
+                horas_solicitadas,
                 solicitud_data.observacion,
                 solicitud_data.motivo,
-                usuario_registro
+                usuario_registro,
             )
-            
+
             resultado = execute_insert(INSERT_SOLICITUD, params)
             
             if not resultado or 'id_solicitud' not in resultado:
@@ -265,7 +418,8 @@ class VacacionesPermisosService(BaseService):
                     tipo_solicitud=solicitud_data.tipo_solicitud,
                     codigo_permiso=solicitud_data.codigo_permiso,
                     codigo_trabajador=solicitud_data.codigo_trabajador,
-                    dias_solicitados=dias_solicitados
+                    dias_solicitados=dias_solicitados,
+                    modo=modo,
                 )
             except ServiceError as e:
                 # Si falla la creación del flujo, eliminar la solicitud creada
@@ -378,9 +532,9 @@ class VacacionesPermisosService(BaseService):
             )
             if trabajador:
                 solicitud['nombre_trabajador'] = trabajador[0].get('nombre_completo')
-            
-            return solicitud
-            
+
+            return VacacionesPermisosService._enriquecer_solicitud(solicitud)
+
         except NotFoundError:
             raise
         except Exception as e:
@@ -450,9 +604,14 @@ class VacacionesPermisosService(BaseService):
             total = total_result[0]['total'] if total_result else 0
             
             pages = math.ceil(total / limit) if total > 0 else 0
-            
+
+            items_enriquecidos = [
+                VacacionesPermisosService._enriquecer_solicitud(dict(item))
+                for item in (items or [])
+            ]
+
             return {
-                'items': items,
+                'items': items_enriquecidos,
                 'total': total,
                 'page': page,
                 'limit': limit,
@@ -499,40 +658,88 @@ class VacacionesPermisosService(BaseService):
                     internal_code="SOLICITUD_NOT_PENDING"
                 )
             
-            # Calcular días si se actualizan fechas
-            dias_solicitados = None
             fecha_inicio = solicitud_data.fecha_inicio or solicitud_actual['fecha_inicio']
             fecha_fin = solicitud_data.fecha_fin or solicitud_actual['fecha_fin']
+            hora_inicio = (
+                solicitud_data.hora_inicio
+                if solicitud_data.hora_inicio is not None
+                else solicitud_actual.get('hora_inicio')
+            )
+            hora_fin = (
+                solicitud_data.hora_fin
+                if solicitud_data.hora_fin is not None
+                else solicitud_actual.get('hora_fin')
+            )
 
-            await VacacionesPermisosService.validar_sin_solapamiento_fechas(
+            modo = VacacionesPermisosService.resolver_modo_tiempo(
+                solicitud_actual['tipo_solicitud'],
+                solicitud_actual.get('codigo_permiso'),
+            )
+            VacacionesPermisosService.validar_campos_segun_modo(
+                modo=modo,
+                tipo_solicitud=solicitud_actual['tipo_solicitud'],
+                fecha_inicio=fecha_inicio,
+                fecha_fin=fecha_fin,
+                hora_inicio=hora_inicio,
+                hora_fin=hora_fin,
+            )
+
+            cambian_periodo = any([
+                solicitud_data.fecha_inicio,
+                solicitud_data.fecha_fin,
+                solicitud_data.hora_inicio is not None,
+                solicitud_data.hora_fin is not None,
+            ])
+
+            dias_solicitados = None
+            horas_solicitadas = None
+            hora_inicio_db = None
+            hora_fin_db = None
+
+            if cambian_periodo or modo == 'H':
+                if modo == 'H':
+                    dias_solicitados = Decimal('0')
+                    hora_inicio_db = hora_inicio
+                    hora_fin_db = hora_fin
+                    horas_solicitadas = VacacionesPermisosService.calcular_horas_solicitadas(
+                        hora_inicio_db, hora_fin_db
+                    )
+                elif solicitud_data.fecha_inicio or solicitud_data.fecha_fin:
+                    dias_solicitados = VacacionesPermisosService.calcular_dias_solicitados(
+                        fecha_inicio, fecha_fin
+                    )
+                    hora_inicio_db = None
+                    hora_fin_db = None
+                    horas_solicitadas = None
+
+            await VacacionesPermisosService.validar_sin_solapamiento(
                 codigo_trabajador=solicitud_actual['codigo_trabajador'],
                 fecha_inicio=fecha_inicio,
                 fecha_fin=fecha_fin,
+                modo=modo,
+                hora_inicio=hora_inicio if modo == 'H' else None,
+                hora_fin=hora_fin if modo == 'H' else None,
                 id_solicitud_excluir=id_solicitud,
             )
-            
-            if solicitud_data.fecha_inicio or solicitud_data.fecha_fin:
-                dias_solicitados = VacacionesPermisosService.calcular_dias_solicitados(
-                    fecha_inicio, fecha_fin
+
+            if dias_solicitados is not None and solicitud_actual['tipo_solicitud'] == 'V':
+                await VacacionesPermisosService.validar_saldo_suficiente(
+                    solicitud_actual['codigo_trabajador'],
+                    dias_solicitados,
+                    solicitud_actual['tipo_solicitud'],
                 )
-                
-                # Validar saldo si es vacación
-                if solicitud_actual['tipo_solicitud'] == 'V':
-                    await VacacionesPermisosService.validar_saldo_suficiente(
-                        solicitud_actual['codigo_trabajador'],
-                        dias_solicitados,
-                        solicitud_actual['tipo_solicitud']
-                    )
-            
-            # Actualizar
+
             params = (
                 solicitud_data.fecha_inicio,
                 solicitud_data.fecha_fin,
+                hora_inicio_db if cambian_periodo else solicitud_data.hora_inicio,
+                hora_fin_db if cambian_periodo else solicitud_data.hora_fin,
                 dias_solicitados,
+                horas_solicitadas,
                 solicitud_data.observacion,
                 solicitud_data.motivo,
                 usuario_modificacion,
-                id_solicitud
+                id_solicitud,
             )
             
             resultado = execute_update(UPDATE_SOLICITUD, params)
@@ -990,7 +1197,8 @@ class VacacionesPermisosService(BaseService):
         tipo_solicitud: str,
         codigo_permiso: Optional[str],
         codigo_trabajador: str,
-        dias_solicitados: Decimal
+        dias_solicitados: Decimal,
+        modo: str = 'D',
     ) -> None:
         """
         Crea el flujo de aprobación para una solicitud.
@@ -1020,6 +1228,9 @@ class VacacionesPermisosService(BaseService):
             codigo_area = trabajador_info.get('codigo_area')
             codigo_seccion = trabajador_info.get('codigo_seccion')
             codigo_cargo = trabajador_info.get('codigo_cargo')
+
+            # Permisos por hora (0 días en BD): usar mínimo 1 solo para matchear reglas de flujo
+            dias_para_flujo = Decimal('1') if modo == 'H' else dias_solicitados
             
             # 2. Determinar configuración de flujo
             config_params = (
@@ -1028,8 +1239,8 @@ class VacacionesPermisosService(BaseService):
                 codigo_area, codigo_area,
                 codigo_seccion, codigo_seccion,
                 codigo_cargo, codigo_cargo,
-                dias_solicitados, dias_solicitados,  # Para dias_desde: ? IS NULL OR dias_desde IS NULL OR ? >= dias_desde
-                dias_solicitados, dias_solicitados   # Para dias_hasta: ? IS NULL OR dias_hasta IS NULL OR ? <= dias_hasta
+                dias_para_flujo, dias_para_flujo,
+                dias_para_flujo, dias_para_flujo,
             )
             
             config_flujo = execute_query(
@@ -1766,6 +1977,10 @@ class VacacionesPermisosService(BaseService):
             secciones = execute_query(SELECT_CATALOGO_SECCIONES)
             cargos = execute_query(SELECT_CATALOGO_CARGOS)
             tipos_permiso = execute_query(SELECT_CATALOGO_TIPOS_PERMISO)
+            if tipos_permiso:
+                for item in tipos_permiso:
+                    if item.get('tiempo') is not None:
+                        item['tiempo'] = str(item['tiempo']).strip().upper()
             
             return {
                 'areas': areas or [],

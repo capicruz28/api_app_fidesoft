@@ -622,47 +622,60 @@ SELECT_PERFIL_EXTERNO_QUERY = """
 INSERT_SOLICITUD = """
     INSERT INTO ppavac_solicitud (
         tipo_solicitud, codigo_permiso, codigo_trabajador, fecha_inicio, fecha_fin,
-        dias_solicitados, observacion, motivo, estado, usuario_registro
+        hora_inicio, hora_fin, dias_solicitados, horas_solicitadas,
+        observacion, motivo, estado, usuario_registro
     )
     OUTPUT INSERTED.id_solicitud, INSERTED.tipo_solicitud, INSERTED.codigo_permiso,
            INSERTED.codigo_trabajador, INSERTED.fecha_inicio, INSERTED.fecha_fin,
-           INSERTED.dias_solicitados, INSERTED.observacion, INSERTED.motivo,
+           INSERTED.hora_inicio, INSERTED.hora_fin,
+           INSERTED.dias_solicitados, INSERTED.horas_solicitadas,
+           INSERTED.observacion, INSERTED.motivo,
            INSERTED.estado, INSERTED.fecha_registro, INSERTED.usuario_registro
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'P', ?);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'P', ?);
 """
 
 SELECT_SOLICITUD_BY_ID = """
     SELECT 
-        id_solicitud, tipo_solicitud, codigo_permiso, codigo_trabajador,
-        fecha_inicio, fecha_fin, dias_solicitados, observacion, motivo,
-        estado, fecha_registro, usuario_registro, fecha_modificacion,
-        usuario_modificacion, fecha_anulacion, usuario_anulacion,
-        motivo_anulacion, sregdi, fecha_registro_planilla
-    FROM ppavac_solicitud
-    WHERE id_solicitud = ?;
+        s.id_solicitud, s.tipo_solicitud, s.codigo_permiso, s.codigo_trabajador,
+        s.fecha_inicio, s.fecha_fin, s.hora_inicio, s.hora_fin,
+        s.dias_solicitados, s.horas_solicitadas, s.observacion, s.motivo,
+        s.estado, s.fecha_registro, s.usuario_registro, s.fecha_modificacion,
+        s.usuario_modificacion, s.fecha_anulacion, s.usuario_anulacion,
+        s.motivo_anulacion, s.sregdi, s.fecha_registro_planilla,
+        p.dconfa AS descripcion_permiso,
+        p.ctiempo AS tiempo_catalogo
+    FROM ppavac_solicitud s
+    LEFT JOIN dbo.vw_mconfa00 p ON s.codigo_permiso COLLATE DATABASE_DEFAULT = p.cconfa COLLATE DATABASE_DEFAULT
+    WHERE s.id_solicitud = ?;
 """
 
 SELECT_SOLICITUDES_BY_TRABAJADOR = """
     SELECT 
-        id_solicitud, tipo_solicitud, codigo_permiso, codigo_trabajador,
-        fecha_inicio, fecha_fin, dias_solicitados, observacion, motivo,
-        estado, fecha_registro, usuario_registro, fecha_modificacion,
-        usuario_modificacion, fecha_anulacion, usuario_anulacion,
-        motivo_anulacion, sregdi, fecha_registro_planilla
-    FROM ppavac_solicitud
-    WHERE codigo_trabajador = ?
-    ORDER BY fecha_registro DESC;
+        s.id_solicitud, s.tipo_solicitud, s.codigo_permiso, s.codigo_trabajador,
+        s.fecha_inicio, s.fecha_fin, s.hora_inicio, s.hora_fin,
+        s.dias_solicitados, s.horas_solicitadas, s.observacion, s.motivo,
+        s.estado, s.fecha_registro, s.usuario_registro, s.fecha_modificacion,
+        s.usuario_modificacion, s.fecha_anulacion, s.usuario_anulacion,
+        s.motivo_anulacion, s.sregdi, s.fecha_registro_planilla,
+        p.dconfa AS descripcion_permiso,
+        p.ctiempo AS tiempo_catalogo
+    FROM ppavac_solicitud s
+    LEFT JOIN dbo.vw_mconfa00 p ON s.codigo_permiso COLLATE DATABASE_DEFAULT = p.cconfa COLLATE DATABASE_DEFAULT
+    WHERE s.codigo_trabajador = ?
+    ORDER BY s.fecha_registro DESC;
 """
 
 SELECT_SOLICITUDES_PAGINATED = """
     WITH SolicitudesPaginadas AS (
         SELECT 
             s.id_solicitud, s.tipo_solicitud, s.codigo_permiso, s.codigo_trabajador,
-            s.fecha_inicio, s.fecha_fin, s.dias_solicitados, s.observacion, s.motivo,
+            s.fecha_inicio, s.fecha_fin, s.hora_inicio, s.hora_fin,
+            s.dias_solicitados, s.horas_solicitadas, s.observacion, s.motivo,
             s.estado, s.fecha_registro, s.usuario_registro, s.fecha_modificacion,
             s.usuario_modificacion, s.fecha_anulacion, s.usuario_anulacion,
             s.motivo_anulacion, s.sregdi, s.fecha_registro_planilla,
             p.dconfa AS descripcion_permiso,
+            p.ctiempo AS tiempo_catalogo,
             ROW_NUMBER() OVER (ORDER BY s.fecha_registro DESC) AS rn
         FROM ppavac_solicitud s
         LEFT JOIN dbo.vw_mconfa00 p ON s.codigo_permiso COLLATE DATABASE_DEFAULT = p.cconfa COLLATE DATABASE_DEFAULT
@@ -689,12 +702,35 @@ COUNT_SOLICITUDES = """
 
 COUNT_SOLICITUDES_SOLAPADAS = """
     SELECT COUNT(1) AS total
-    FROM ppavac_solicitud
-    WHERE codigo_trabajador = ?
-      AND estado IN ('P', 'A')
-      AND fecha_inicio <= ?
-      AND fecha_fin >= ?
-      AND (? IS NULL OR id_solicitud <> ?);
+    FROM ppavac_solicitud s
+    WHERE s.codigo_trabajador = ?
+      AND s.estado IN ('P', 'A')
+      AND (? IS NULL OR s.id_solicitud <> ?)
+      AND (
+        (
+          ? = 0
+          OR s.tipo_solicitud = 'V'
+          OR s.hora_inicio IS NULL
+        )
+        AND s.fecha_inicio <= ?
+        AND s.fecha_fin >= ?
+      )
+      OR (
+        ? = 1
+        AND s.tipo_solicitud = 'P'
+        AND s.hora_inicio IS NOT NULL
+        AND s.hora_fin IS NOT NULL
+        AND s.fecha_inicio <= ?
+        AND s.fecha_fin >= ?
+        AND s.hora_inicio <= ?
+        AND s.hora_fin >= ?
+      );
+"""
+
+SELECT_TIPO_PERMISO_BY_CODIGO = """
+    SELECT ctiempo AS tiempo
+    FROM dbo.vw_mconfa00
+    WHERE cconfa = ?;
 """
 
 UPDATE_SOLICITUD = """
@@ -702,14 +738,19 @@ UPDATE_SOLICITUD = """
     SET 
         fecha_inicio = COALESCE(?, fecha_inicio),
         fecha_fin = COALESCE(?, fecha_fin),
+        hora_inicio = COALESCE(?, hora_inicio),
+        hora_fin = COALESCE(?, hora_fin),
         dias_solicitados = COALESCE(?, dias_solicitados),
+        horas_solicitadas = COALESCE(?, horas_solicitadas),
         observacion = COALESCE(?, observacion),
         motivo = COALESCE(?, motivo),
         fecha_modificacion = GETDATE(),
         usuario_modificacion = ?
     OUTPUT INSERTED.id_solicitud, INSERTED.tipo_solicitud, INSERTED.codigo_permiso,
            INSERTED.codigo_trabajador, INSERTED.fecha_inicio, INSERTED.fecha_fin,
-           INSERTED.dias_solicitados, INSERTED.observacion, INSERTED.motivo,
+           INSERTED.hora_inicio, INSERTED.hora_fin,
+           INSERTED.dias_solicitados, INSERTED.horas_solicitadas,
+           INSERTED.observacion, INSERTED.motivo,
            INSERTED.estado, INSERTED.fecha_registro, INSERTED.usuario_registro,
            INSERTED.fecha_modificacion, INSERTED.usuario_modificacion
     WHERE id_solicitud = ? AND estado = 'P';
@@ -1011,7 +1052,7 @@ SELECT_CATALOGO_CARGOS = """
 """
 
 SELECT_CATALOGO_TIPOS_PERMISO = """
-    SELECT cconfa AS codigo, dconfa AS descripcion
+    SELECT cconfa AS codigo, dconfa AS descripcion, ctiempo AS tiempo
     FROM dbo.vw_mconfa00
     ORDER BY dconfa;
 """
