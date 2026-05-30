@@ -41,9 +41,9 @@ router = APIRouter()
 def _map_tipo_permiso_catalogo(item: Dict[str, Any]) -> CatalogoPermisoItem:
     """
     Serializa un registro de vw_mconfa00 hacia CatalogoPermisoItem.
-    El campo tiempo (ctiempo en BD) es obligatorio para el frontend (D/H).
+    El campo tiempo (ctiemp en BD) es obligatorio para el frontend (D/H).
     """
-    tiempo_raw = item.get('tiempo') or item.get('ctiempo')
+    tiempo_raw = item.get('tiempo') or item.get('ctiemp') or item.get('ctiempo')
     return CatalogoPermisoItem(
         codigo=str(item.get('codigo', '')).strip(),
         descripcion=str(item.get('descripcion', '')).strip(),

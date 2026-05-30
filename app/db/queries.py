@@ -643,7 +643,7 @@ SELECT_SOLICITUD_BY_ID = """
         s.usuario_modificacion, s.fecha_anulacion, s.usuario_anulacion,
         s.motivo_anulacion, s.sregdi, s.fecha_registro_planilla,
         p.dconfa AS descripcion_permiso,
-        p.ctiempo AS tiempo_catalogo
+        p.ctiemp AS tiempo_catalogo
     FROM ppavac_solicitud s
     LEFT JOIN dbo.vw_mconfa00 p ON s.codigo_permiso COLLATE DATABASE_DEFAULT = p.cconfa COLLATE DATABASE_DEFAULT
     WHERE s.id_solicitud = ?;
@@ -658,7 +658,7 @@ SELECT_SOLICITUDES_BY_TRABAJADOR = """
         s.usuario_modificacion, s.fecha_anulacion, s.usuario_anulacion,
         s.motivo_anulacion, s.sregdi, s.fecha_registro_planilla,
         p.dconfa AS descripcion_permiso,
-        p.ctiempo AS tiempo_catalogo
+        p.ctiemp AS tiempo_catalogo
     FROM ppavac_solicitud s
     LEFT JOIN dbo.vw_mconfa00 p ON s.codigo_permiso COLLATE DATABASE_DEFAULT = p.cconfa COLLATE DATABASE_DEFAULT
     WHERE s.codigo_trabajador = ?
@@ -675,7 +675,7 @@ SELECT_SOLICITUDES_PAGINATED = """
             s.usuario_modificacion, s.fecha_anulacion, s.usuario_anulacion,
             s.motivo_anulacion, s.sregdi, s.fecha_registro_planilla,
             p.dconfa AS descripcion_permiso,
-            p.ctiempo AS tiempo_catalogo,
+            p.ctiemp AS tiempo_catalogo,
             ROW_NUMBER() OVER (ORDER BY s.fecha_registro DESC) AS rn
         FROM ppavac_solicitud s
         LEFT JOIN dbo.vw_mconfa00 p ON s.codigo_permiso COLLATE DATABASE_DEFAULT = p.cconfa COLLATE DATABASE_DEFAULT
@@ -728,7 +728,7 @@ COUNT_SOLICITUDES_SOLAPADAS = """
 """
 
 SELECT_TIPO_PERMISO_BY_CODIGO = """
-    SELECT ctiempo AS tiempo
+    SELECT ctiemp AS tiempo
     FROM dbo.vw_mconfa00
     WHERE cconfa = ?;
 """
@@ -1052,7 +1052,7 @@ SELECT_CATALOGO_CARGOS = """
 """
 
 SELECT_CATALOGO_TIPOS_PERMISO = """
-    SELECT cconfa AS codigo, dconfa AS descripcion, ctiempo AS tiempo
+    SELECT cconfa AS codigo, dconfa AS descripcion, ctiemp AS tiempo
     FROM dbo.vw_mconfa00
     ORDER BY dconfa;
 """

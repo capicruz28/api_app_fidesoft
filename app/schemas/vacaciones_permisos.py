@@ -446,7 +446,7 @@ class CatalogoItem(BaseModel):
 
 
 class CatalogoPermisoItem(CatalogoItem):
-    """Tipo de permiso con unidad de tiempo del catálogo (ctiempo)."""
+    """Tipo de permiso con unidad de tiempo del catálogo (ctiemp)."""
     tiempo: str = Field(..., description="D=Día, H=Hora")
 
     @field_validator('tiempo')

@@ -1979,9 +1979,10 @@ class VacacionesPermisosService(BaseService):
             tipos_permiso = execute_query(SELECT_CATALOGO_TIPOS_PERMISO)
             if tipos_permiso:
                 for item in tipos_permiso:
-                    # ctiempo AS tiempo en SQL; aceptar ambas claves por compatibilidad
-                    raw = item.get('tiempo') or item.get('ctiempo')
+                    # ctiemp AS tiempo en SQL; aceptar claves legacy por compatibilidad
+                    raw = item.get('tiempo') or item.get('ctiemp') or item.get('ctiempo')
                     item['tiempo'] = str(raw).strip().upper() if raw else 'D'
+                    item.pop('ctiemp', None)
                     item.pop('ctiempo', None)
             
             return {
