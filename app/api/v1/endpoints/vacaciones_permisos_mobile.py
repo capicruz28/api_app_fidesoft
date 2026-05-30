@@ -38,6 +38,19 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
+def _map_tipo_permiso_catalogo(item: Dict[str, Any]) -> CatalogoPermisoItem:
+    """
+    Serializa un registro de vw_mconfa00 hacia CatalogoPermisoItem.
+    El campo tiempo (ctiempo en BD) es obligatorio para el frontend (D/H).
+    """
+    tiempo_raw = item.get('tiempo') or item.get('ctiempo')
+    return CatalogoPermisoItem(
+        codigo=str(item.get('codigo', '')).strip(),
+        descripcion=str(item.get('descripcion', '')).strip(),
+        tiempo=str(tiempo_raw).strip().upper() if tiempo_raw else 'D',
+    )
+
+
 def obtener_codigo_trabajador(current_user: UsuarioReadWithRoles) -> str:
     """
     Obtiene el código de trabajador del usuario actual.
@@ -627,7 +640,10 @@ async def obtener_catalogos(
             areas=[CatalogoItem(**item) for item in catalogos['areas']],
             secciones=[CatalogoItem(**item) for item in catalogos['secciones']],
             cargos=[CatalogoItem(**item) for item in catalogos['cargos']],
-            tipos_permiso=[CatalogoPermisoItem(**item) for item in catalogos['tipos_permiso']]
+            tipos_permiso=[
+                _map_tipo_permiso_catalogo(item)
+                for item in catalogos['tipos_permiso']
+            ],
         )
         
     except HTTPException:
