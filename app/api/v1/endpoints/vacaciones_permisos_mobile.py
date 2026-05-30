@@ -101,6 +101,9 @@ async def crear_solicitud(
         
     except HTTPException:
         raise
+    except CustomException as ce:
+        logger.warning(f"Error de negocio al crear solicitud: {ce.detail}")
+        raise HTTPException(status_code=ce.status_code, detail=ce.detail)
     except Exception as e:
         logger.exception(f"Error creando solicitud: {str(e)}")
         raise HTTPException(
@@ -221,6 +224,9 @@ async def actualizar_solicitud(
         
     except HTTPException:
         raise
+    except CustomException as ce:
+        logger.warning(f"Error de negocio al actualizar solicitud: {ce.detail}")
+        raise HTTPException(status_code=ce.status_code, detail=ce.detail)
     except Exception as e:
         logger.exception(f"Error actualizando solicitud: {str(e)}")
         raise HTTPException(
@@ -263,6 +269,9 @@ async def anular_solicitud(
         
     except HTTPException:
         raise
+    except CustomException as ce:
+        logger.warning(f"Error de negocio al anular solicitud: {ce.detail}")
+        raise HTTPException(status_code=ce.status_code, detail=ce.detail)
     except Exception as e:
         logger.exception(f"Error anulando solicitud: {str(e)}")
         raise HTTPException(

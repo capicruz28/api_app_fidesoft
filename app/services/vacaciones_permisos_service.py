@@ -21,7 +21,8 @@ from app.db.queries import (
     execute_query, execute_insert, execute_update, execute_transaction,
     # Solicitudes
     INSERT_SOLICITUD, SELECT_SOLICITUD_BY_ID, SELECT_SOLICITUDES_BY_TRABAJADOR,
-    SELECT_SOLICITUDES_PAGINATED, COUNT_SOLICITUDES, UPDATE_SOLICITUD, ANULAR_SOLICITUD,
+    SELECT_SOLICITUDES_PAGINATED, COUNT_SOLICITUDES, COUNT_SOLICITUDES_SOLAPADAS,
+    UPDATE_SOLICITUD, ANULAR_SOLICITUD,
     # Aprobaciones
     INSERT_APROBACION, SELECT_APROBACIONES_BY_SOLICITUD, SELECT_APROBACIONES_PENDIENTES,
     UPDATE_APROBACION, UPDATE_SOLICITUD_ESTADO,
@@ -145,6 +146,42 @@ class VacacionesPermisosService(BaseService):
                 internal_code="SALDO_VALIDATION_ERROR"
             )
 
+    @staticmethod
+    @BaseService.handle_service_errors
+    async def validar_sin_solapamiento_fechas(
+        codigo_trabajador: str,
+        fecha_inicio: date,
+        fecha_fin: date,
+        id_solicitud_excluir: Optional[int] = None,
+    ) -> None:
+        """
+        Valida que no existan solicitudes activas (P o A) que se crucen con el rango indicado.
+
+        Condición de solapamiento:
+        (NuevaFechaInicio <= FinExistente) AND (NuevaFechaFin >= InicioExistente)
+
+        Aplica a vacaciones y permisos del mismo trabajador (Opción A).
+        """
+        resultado = execute_query(
+            COUNT_SOLICITUDES_SOLAPADAS,
+            (
+                codigo_trabajador,
+                fecha_fin,
+                fecha_inicio,
+                id_solicitud_excluir,
+                id_solicitud_excluir,
+            ),
+        )
+        total = int(resultado[0]['total']) if resultado else 0
+        if total > 0:
+            raise ValidationError(
+                detail=(
+                    "Ya existe una solicitud pendiente o aprobada que se cruza "
+                    "con el rango de fechas indicado."
+                ),
+                internal_code="SOLICITUD_FECHAS_SOLAPADAS",
+            )
+
     # ============================================
     # MÉTODOS DE SOLICITUDES
     # ============================================
@@ -180,8 +217,15 @@ class VacacionesPermisosService(BaseService):
                 solicitud_data.fecha_inicio,
                 solicitud_data.fecha_fin
             )
+
+            # 2. Validar solapamiento con solicitudes activas (V o P)
+            await VacacionesPermisosService.validar_sin_solapamiento_fechas(
+                codigo_trabajador=solicitud_data.codigo_trabajador,
+                fecha_inicio=solicitud_data.fecha_inicio,
+                fecha_fin=solicitud_data.fecha_fin,
+            )
             
-            # 2. Validar saldo si es vacación
+            # 3. Validar saldo si es vacación
             if solicitud_data.tipo_solicitud == 'V':
                 await VacacionesPermisosService.validar_saldo_suficiente(
                     solicitud_data.codigo_trabajador,
@@ -189,7 +233,7 @@ class VacacionesPermisosService(BaseService):
                     solicitud_data.tipo_solicitud
                 )
             
-            # 3. Insertar solicitud
+            # 4. Insertar solicitud
             params = (
                 solicitud_data.tipo_solicitud,
                 solicitud_data.codigo_permiso,
@@ -459,6 +503,13 @@ class VacacionesPermisosService(BaseService):
             dias_solicitados = None
             fecha_inicio = solicitud_data.fecha_inicio or solicitud_actual['fecha_inicio']
             fecha_fin = solicitud_data.fecha_fin or solicitud_actual['fecha_fin']
+
+            await VacacionesPermisosService.validar_sin_solapamiento_fechas(
+                codigo_trabajador=solicitud_actual['codigo_trabajador'],
+                fecha_inicio=fecha_inicio,
+                fecha_fin=fecha_fin,
+                id_solicitud_excluir=id_solicitud,
+            )
             
             if solicitud_data.fecha_inicio or solicitud_data.fecha_fin:
                 dias_solicitados = VacacionesPermisosService.calcular_dias_solicitados(

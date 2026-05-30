@@ -687,6 +687,16 @@ COUNT_SOLICITUDES = """
       AND (? IS NULL OR fecha_fin <= ?);
 """
 
+COUNT_SOLICITUDES_SOLAPADAS = """
+    SELECT COUNT(1) AS total
+    FROM ppavac_solicitud
+    WHERE codigo_trabajador = ?
+      AND estado IN ('P', 'A')
+      AND fecha_inicio <= ?
+      AND fecha_fin >= ?
+      AND (? IS NULL OR id_solicitud <> ?);
+"""
+
 UPDATE_SOLICITUD = """
     UPDATE ppavac_solicitud
     SET 
