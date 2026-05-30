@@ -246,6 +246,7 @@ class VacacionesPermisosService(BaseService):
         codigo_trabajador: str,
         fecha_inicio: date,
         fecha_fin: date,
+        tipo_solicitud: str,
         modo: str,
         hora_inicio: Optional[time] = None,
         hora_fin: Optional[time] = None,
@@ -253,9 +254,12 @@ class VacacionesPermisosService(BaseService):
     ) -> None:
         """
         Valida solapamiento con solicitudes activas (P o A).
-        Rama día: cruce de fechas si al menos uno es por día.
-        Rama hora: mismo criterio de fechas más cruce de horas si ambos son por hora.
+
+        - V nueva: conflicto por fechas con cualquier activa (V o P).
+        - P por día: conflicto por fechas con V o P día existente.
+        - P por hora: conflicto con V/P día por fechas; con P hora por fechas + horas.
         """
+        tipo_solicitud = tipo_solicitud.upper()
         nueva_es_hora = 1 if modo == 'H' else 0
         resultado = execute_query(
             COUNT_SOLICITUDES_SOLAPADAS,
@@ -264,9 +268,11 @@ class VacacionesPermisosService(BaseService):
                 id_solicitud_excluir,
                 id_solicitud_excluir,
                 nueva_es_hora,
+                tipo_solicitud,
                 fecha_fin,
                 fecha_inicio,
                 nueva_es_hora,
+                tipo_solicitud,
                 fecha_fin,
                 fecha_inicio,
                 hora_fin if modo == 'H' else None,
@@ -275,20 +281,18 @@ class VacacionesPermisosService(BaseService):
         )
         total = int(resultado[0]['total']) if resultado else 0
         if total > 0:
-            detail = (
-                "Ya existe una solicitud pendiente o aprobada que se cruza "
-                "con el rango de horas indicado."
-                if modo == 'H'
-                else (
+            if modo == 'H' and tipo_solicitud == 'P':
+                detail = (
+                    "Ya existe una solicitud pendiente o aprobada que se cruza "
+                    "con el rango de horas indicado."
+                )
+                code = "SOLICITUD_HORAS_SOLAPADAS"
+            else:
+                detail = (
                     "Ya existe una solicitud pendiente o aprobada que se cruza "
                     "con el rango de fechas indicado."
                 )
-            )
-            code = (
-                "SOLICITUD_HORAS_SOLAPADAS"
-                if modo == 'H'
-                else "SOLICITUD_FECHAS_SOLAPADAS"
-            )
+                code = "SOLICITUD_FECHAS_SOLAPADAS"
             raise ValidationError(detail=detail, internal_code=code)
 
     @staticmethod
@@ -297,6 +301,7 @@ class VacacionesPermisosService(BaseService):
         codigo_trabajador: str,
         fecha_inicio: date,
         fecha_fin: date,
+        tipo_solicitud: str = 'P',
         id_solicitud_excluir: Optional[int] = None,
     ) -> None:
         """Compatibilidad: asume modo día."""
@@ -304,6 +309,7 @@ class VacacionesPermisosService(BaseService):
             codigo_trabajador=codigo_trabajador,
             fecha_inicio=fecha_inicio,
             fecha_fin=fecha_fin,
+            tipo_solicitud=tipo_solicitud,
             modo='D',
             id_solicitud_excluir=id_solicitud_excluir,
         )
@@ -372,6 +378,7 @@ class VacacionesPermisosService(BaseService):
                 codigo_trabajador=solicitud_data.codigo_trabajador,
                 fecha_inicio=solicitud_data.fecha_inicio,
                 fecha_fin=solicitud_data.fecha_fin,
+                tipo_solicitud=solicitud_data.tipo_solicitud,
                 modo=modo,
                 hora_inicio=hora_inicio_db,
                 hora_fin=hora_fin_db,
@@ -716,6 +723,7 @@ class VacacionesPermisosService(BaseService):
                 codigo_trabajador=solicitud_actual['codigo_trabajador'],
                 fecha_inicio=fecha_inicio,
                 fecha_fin=fecha_fin,
+                tipo_solicitud=solicitud_actual['tipo_solicitud'],
                 modo=modo,
                 hora_inicio=hora_inicio if modo == 'H' else None,
                 hora_fin=hora_fin if modo == 'H' else None,

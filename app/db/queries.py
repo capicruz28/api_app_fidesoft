@@ -707,16 +707,21 @@ COUNT_SOLICITUDES_SOLAPADAS = """
       AND s.estado IN ('P', 'A')
       AND (? IS NULL OR s.id_solicitud <> ?)
       AND (
+        -- CASO 1: Bloqueo total por superposición de fechas (conflicto de días completos)
         (
-          ? = 0
-          OR s.tipo_solicitud = 'V'
-          OR s.hora_inicio IS NULL
+          (
+              ? = 0
+              OR ? = 'V'
+          )
+          OR (s.tipo_solicitud = 'V' OR s.hora_inicio IS NULL)
         )
         AND s.fecha_inicio <= ?
         AND s.fecha_fin >= ?
       )
       OR (
+        -- CASO 2: Ambos permisos por hora en el mismo día (conflicto horario)
         ? = 1
+        AND ? = 'P'
         AND s.tipo_solicitud = 'P'
         AND s.hora_inicio IS NOT NULL
         AND s.hora_fin IS NOT NULL
