@@ -28,6 +28,23 @@ logger = logging.getLogger(__name__)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="apivac/v1/auth/login/")
 
 
+def _aplicar_permiso_remoto(user: Dict[str, Any], username: str, user_data_cliente: Optional[Dict[str, Any]] = None) -> None:
+    """
+    Mapea usuarios_web00.permiso_remoto (CHAR 'S'/'N') a booleano en el dict del usuario.
+    """
+    permiso_raw = None
+    if user_data_cliente is not None and "permiso_remoto" in user_data_cliente:
+        permiso_raw = user_data_cliente.get("permiso_remoto")
+    else:
+        permiso_row = execute_auth_query(
+            "SELECT permiso_remoto FROM usuarios_web00 WHERE cusuar = ?",
+            (username,),
+        )
+        if permiso_row:
+            permiso_raw = permiso_row.get("permiso_remoto")
+    user["permiso_remoto"] = permiso_raw == "S"
+
+
 def create_access_token(data: dict) -> str:
     """
     Crea un token JWT de acceso con iat, exp y type='access'
@@ -524,6 +541,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict:
         )
 
     # Si es usuario cliente, obtener campos adicionales desde tablas del cliente
+    user_data_cliente = None
     if user.get('origen_datos') == 'cliente':
         user_data_cliente = execute_auth_query(SELECT_CLIENTE_USER_DATA, (username,))
         if user_data_cliente:
@@ -532,6 +550,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict:
             user['area'] = user_data_cliente.get('area')
             user['cargo'] = user_data_cliente.get('cargo')
             user['telefono'] = user_data_cliente.get('telefono')
+
+    _aplicar_permiso_remoto(user, username, user_data_cliente)
     
     # Normalizar correo vacío a None
     if user.get('correo') == '':

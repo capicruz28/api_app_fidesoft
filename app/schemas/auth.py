@@ -119,6 +119,11 @@ class UserDataBase(BaseModel):
         description="Teléfono de contacto del usuario (proveniente del sistema cliente)."
     )
 
+    permiso_remoto: bool = Field(
+        False,
+        description="Indica si el usuario tiene permiso para realizar marcaciones remotas (mapeado desde usuarios_web00.permiso_remoto)."
+    )
+
     @field_validator('nombre_usuario')
     @classmethod
     def validar_nombre_usuario(cls, valor: str) -> str:

@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     aplicaciones,
     cliente_conexiones,
     conexion,
+    marcaciones,
 )
 
 api_router = APIRouter()
@@ -107,4 +108,10 @@ api_router.include_router(
     conexion.router,
     prefix="/conexion",
     tags=["Conexión (Apps)"]
+)
+
+api_router.include_router(
+    marcaciones.router,
+    prefix="/marcaciones",
+    tags=["Marcaciones Remotas"]
 )

@@ -6,7 +6,7 @@ from jose import JWTError, jwt
 from typing import List, Dict, Any
 
 from app.core.config import settings
-from app.core.auth import oauth2_scheme
+from app.core.auth import oauth2_scheme, _aplicar_permiso_remoto
 from app.db.queries import execute_auth_query, execute_query
 # --- Importar los schemas necesarios ---
 from app.schemas.auth import TokenPayload
@@ -70,7 +70,8 @@ async def get_current_active_user(
         # Obtener datos básicos del usuario como diccionario
         user_query = """
         SELECT usuario_id, nombre_usuario, correo, nombre, apellido, es_activo,
-               fecha_creacion, fecha_ultimo_acceso, correo_confirmado
+               fecha_creacion, fecha_ultimo_acceso, correo_confirmado,
+               codigo_trabajador_externo, origen_datos
         FROM usuario
         WHERE nombre_usuario = ? AND es_eliminado = 0
         """
@@ -83,6 +84,12 @@ async def get_current_active_user(
         if not user_dict.get('es_activo'):
             logger.warning(f"Usuario '{username}' autenticado pero inactivo.")
             raise inactive_user_exception
+
+        user_data_cliente = None
+        if user_dict.get("origen_datos") == "cliente":
+            from app.db.queries import SELECT_CLIENTE_USER_DATA
+            user_data_cliente = execute_auth_query(SELECT_CLIENTE_USER_DATA, (username,))
+        _aplicar_permiso_remoto(user_dict, username, user_data_cliente)
 
         # Obtener roles del usuario usando el servicio (devuelve List[Dict])
         roles_list: List[RolRead] = [] # Inicializar lista para objetos RolRead

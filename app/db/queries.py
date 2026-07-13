@@ -1618,6 +1618,7 @@ SELECT_CLIENTE_USER_DATA = """
         a.ctptra AS tipo_trabajador,
         a.dusuar AS descripcion_usuario,
         a.ctraba AS codigo_trabajador,
+        a.permiso_remoto AS permiso_remoto,
         b.correo AS correo,
         b.area AS area,
         b.cargo AS cargo,
