@@ -1,10 +1,10 @@
-from datetime import datetime, time
-from typing import Any, Dict, Optional
+from datetime import date, datetime, time
+from typing import Any, Dict, List, Optional
 import logging
 
 from app.db.queries import execute_query, execute_insert, execute_update, execute_transaction
 from app.schemas.marcaciones import MarcacionRemotaCreate
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,18 @@ def _formato_hora_marca(valor: Any) -> Optional[str]:
         return None
     # p.ej. "08:30:00.0000000" o "08:30:00"
     return texto.split(".")[0][:8]
+
+
+def _formato_fecha_marca(valor: Any) -> Optional[str]:
+    """Normaliza fecha_marca a string 'YYYY-MM-DD'."""
+    if valor is None:
+        return None
+    if isinstance(valor, datetime):
+        return valor.date().isoformat()
+    if isinstance(valor, date):
+        return valor.isoformat()
+    texto = str(valor).strip()
+    return texto[:10] if texto else None
 
 
 class MarcacionesService(BaseService):
@@ -52,6 +64,37 @@ class MarcacionesService(BaseService):
                 estado[tipo] = _formato_hora_marca(fila.get("hora_marca"))
 
         return estado
+
+    @staticmethod
+    @BaseService.handle_service_errors
+    async def obtener_historial(codigo_trabajador: str, dias: int = 15) -> List[Dict[str, Optional[str]]]:
+        """
+        Retorna las marcaciones del trabajador en los últimos `dias` días.
+        Orden: fecha descendente, tipo de marcación ascendente.
+        """
+        if dias < 1:
+            raise ValidationError(
+                detail="El parámetro 'dias' debe ser mayor o igual a 1.",
+                internal_code="DIAS_INVALIDO",
+            )
+
+        query = """
+            SELECT fecha_marca, id_tipo_marcacion, hora_marca
+            FROM marcaciones_remotas
+            WHERE codigo_trabajador = ?
+              AND fecha_marca >= DATEADD(day, -?, CONVERT(date, GETDATE()))
+            ORDER BY fecha_marca DESC, id_tipo_marcacion ASC
+        """
+        filas = execute_query(query, (codigo_trabajador, dias))
+
+        return [
+            {
+                "fecha_marca": _formato_fecha_marca(fila.get("fecha_marca")),
+                "id_tipo_marcacion": str(fila.get("id_tipo_marcacion") or "").strip() or None,
+                "hora_marca": _formato_hora_marca(fila.get("hora_marca")),
+            }
+            for fila in filas
+        ]
 
     @staticmethod
     @BaseService.handle_service_errors

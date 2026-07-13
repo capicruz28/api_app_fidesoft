@@ -5,7 +5,7 @@ Permite verificar/registrar dispositivos autorizados y registrar marcaciones
 con doble persistencia (legacy + auditoría moderna).
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Depends, status, Query, Request
 
@@ -63,6 +63,34 @@ async def estado_hoy(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al obtener el estado de marcaciones del día.",
+        )
+
+
+@router.get(
+    "/historial",
+    summary="Historial de marcaciones",
+    description="Retorna las marcaciones del trabajador autenticado en los últimos N días.",
+)
+async def historial(
+    dias: int = Query(15, ge=1, le=90, description="Cantidad de días hacia atrás a consultar"),
+    current_user: UsuarioReadWithRoles = Depends(get_current_active_user),
+) -> List[Dict[str, Optional[str]]]:
+    codigo_trabajador = _obtener_codigo_trabajador(current_user)
+
+    try:
+        return await MarcacionesService.obtener_historial(
+            codigo_trabajador=codigo_trabajador,
+            dias=dias,
+        )
+    except HTTPException:
+        raise
+    except CustomException as ce:
+        raise HTTPException(status_code=ce.status_code, detail=ce.detail)
+    except Exception as e:
+        logger.exception(f"Error obteniendo historial de marcaciones: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al obtener el historial de marcaciones.",
         )
 
 
