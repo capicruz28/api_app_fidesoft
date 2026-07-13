@@ -10,6 +10,15 @@ from app.services.base_service import BaseService
 logger = logging.getLogger(__name__)
 
 TIPOS_MARCACION_DIA = ("01", "02", "03", "04")
+DIAS_SEMANA_ES = (
+    "Lunes",
+    "Martes",
+    "Miércoles",
+    "Jueves",
+    "Viernes",
+    "Sábado",
+    "Domingo",
+)
 
 
 def _formato_hora_marca(valor: Any) -> Optional[str]:
@@ -27,16 +36,22 @@ def _formato_hora_marca(valor: Any) -> Optional[str]:
     return texto.split(".")[0][:8]
 
 
-def _formato_fecha_marca(valor: Any) -> Optional[str]:
-    """Normaliza fecha_marca a string 'YYYY-MM-DD'."""
+def _parse_fecha_marca(valor: Any) -> Optional[date]:
+    """Convierte fecha_marca (date/datetime/str) a date."""
     if valor is None:
         return None
     if isinstance(valor, datetime):
-        return valor.date().isoformat()
+        return valor.date()
     if isinstance(valor, date):
-        return valor.isoformat()
-    texto = str(valor).strip()
-    return texto[:10] if texto else None
+        return valor
+    texto = str(valor).strip()[:10]
+    if not texto:
+        return None
+    return date.fromisoformat(texto)
+
+
+def _dia_semana_es(fecha: date) -> str:
+    return DIAS_SEMANA_ES[fecha.weekday()]
 
 
 class MarcacionesService(BaseService):
@@ -67,10 +82,11 @@ class MarcacionesService(BaseService):
 
     @staticmethod
     @BaseService.handle_service_errors
-    async def obtener_historial(codigo_trabajador: str, dias: int = 15) -> List[Dict[str, Optional[str]]]:
+    async def obtener_historial(codigo_trabajador: str, dias: int = 15) -> List[Dict[str, Any]]:
         """
-        Retorna las marcaciones del trabajador en los últimos `dias` días.
-        Orden: fecha descendente, tipo de marcación ascendente.
+        Retorna las marcaciones del trabajador en los últimos `dias` días,
+        agrupadas por fecha con el mapa de tipos 01-04.
+        Orden: fecha descendente.
         """
         if dias < 1:
             raise ValidationError(
@@ -87,14 +103,26 @@ class MarcacionesService(BaseService):
         """
         filas = execute_query(query, (codigo_trabajador, dias))
 
-        return [
-            {
-                "fecha_marca": _formato_fecha_marca(fila.get("fecha_marca")),
-                "id_tipo_marcacion": str(fila.get("id_tipo_marcacion") or "").strip() or None,
-                "hora_marca": _formato_hora_marca(fila.get("hora_marca")),
-            }
-            for fila in filas
-        ]
+        agrupado: Dict[str, Dict[str, Any]] = {}
+
+        for fila in filas:
+            fecha_obj = _parse_fecha_marca(fila.get("fecha_marca"))
+            if fecha_obj is None:
+                continue
+
+            fecha_key = fecha_obj.isoformat()
+            if fecha_key not in agrupado:
+                agrupado[fecha_key] = {
+                    "fecha": fecha_key,
+                    "dia_semana": _dia_semana_es(fecha_obj),
+                    "marcas": {tipo: None for tipo in TIPOS_MARCACION_DIA},
+                }
+
+            tipo = str(fila.get("id_tipo_marcacion") or "").strip()
+            if tipo in TIPOS_MARCACION_DIA and agrupado[fecha_key]["marcas"][tipo] is None:
+                agrupado[fecha_key]["marcas"][tipo] = _formato_hora_marca(fila.get("hora_marca"))
+
+        return sorted(agrupado.values(), key=lambda item: item["fecha"], reverse=True)
 
     @staticmethod
     @BaseService.handle_service_errors
