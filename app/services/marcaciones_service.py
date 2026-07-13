@@ -1,5 +1,5 @@
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, time
+from typing import Any, Dict, Optional
 import logging
 
 from app.db.queries import execute_query, execute_insert, execute_update, execute_transaction
@@ -9,9 +9,49 @@ from app.services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
+TIPOS_MARCACION_DIA = ("01", "02", "03", "04")
+
+
+def _formato_hora_marca(valor: Any) -> Optional[str]:
+    """Normaliza hora_marca de SQL Server a string 'HH:MM:SS'."""
+    if valor is None:
+        return None
+    if isinstance(valor, time):
+        return valor.replace(microsecond=0).strftime("%H:%M:%S")
+    if isinstance(valor, datetime):
+        return valor.time().replace(microsecond=0).strftime("%H:%M:%S")
+    texto = str(valor).strip()
+    if not texto:
+        return None
+    # p.ej. "08:30:00.0000000" o "08:30:00"
+    return texto.split(".")[0][:8]
+
 
 class MarcacionesService(BaseService):
     """Servicio de negocio para marcaciones remotas seguras."""
+
+    @staticmethod
+    @BaseService.handle_service_errors
+    async def obtener_estado_hoy(codigo_trabajador: str) -> Dict[str, Optional[str]]:
+        """
+        Consulta marcaciones_remotas del día actual y mapea tipos 01-04 a su hora.
+        """
+        estado: Dict[str, Optional[str]] = {tipo: None for tipo in TIPOS_MARCACION_DIA}
+
+        query = """
+            SELECT id_tipo_marcacion, hora_marca
+            FROM marcaciones_remotas
+            WHERE codigo_trabajador = ?
+              AND fecha_marca = CONVERT(date, GETDATE())
+        """
+        filas = execute_query(query, (codigo_trabajador,))
+
+        for fila in filas:
+            tipo = str(fila.get("id_tipo_marcacion") or "").strip()
+            if tipo in estado and estado[tipo] is None:
+                estado[tipo] = _formato_hora_marca(fila.get("hora_marca"))
+
+        return estado
 
     @staticmethod
     @BaseService.handle_service_errors

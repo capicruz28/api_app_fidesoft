@@ -5,6 +5,8 @@ Permite verificar/registrar dispositivos autorizados y registrar marcaciones
 con doble persistencia (legacy + auditoría moderna).
 """
 
+from typing import Dict, Optional
+
 from fastapi import APIRouter, HTTPException, Depends, status, Query, Request
 
 from app.schemas.marcaciones import (
@@ -38,6 +40,30 @@ def _obtener_codigo_trabajador(current_user: UsuarioReadWithRoles) -> str:
             detail="Usuario no tiene código de trabajador asociado. Contacte al administrador.",
         )
     return codigo
+
+
+@router.get(
+    "/estado-hoy",
+    summary="Estado de marcaciones del día",
+    description="Retorna las horas de marcación del día actual para los tipos 01-04 del trabajador autenticado.",
+)
+async def estado_hoy(
+    current_user: UsuarioReadWithRoles = Depends(get_current_active_user),
+) -> Dict[str, Optional[str]]:
+    codigo_trabajador = _obtener_codigo_trabajador(current_user)
+
+    try:
+        return await MarcacionesService.obtener_estado_hoy(codigo_trabajador)
+    except HTTPException:
+        raise
+    except CustomException as ce:
+        raise HTTPException(status_code=ce.status_code, detail=ce.detail)
+    except Exception as e:
+        logger.exception(f"Error obteniendo estado de marcaciones del día: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al obtener el estado de marcaciones del día.",
+        )
 
 
 @router.get(
