@@ -13,6 +13,7 @@ from app.schemas.marcaciones import (
     VerificarDispositivoResponse,
     RegistrarDispositivoRequest,
     MarcacionRemotaCreate,
+    HistorialDiaResponse,
 )
 from app.schemas.usuario import UsuarioReadWithRoles
 from app.api.deps import get_current_active_user
@@ -68,13 +69,14 @@ async def estado_hoy(
 
 @router.get(
     "/historial",
+    response_model=List[HistorialDiaResponse],
     summary="Historial de marcaciones",
-    description="Retorna las marcaciones del trabajador autenticado en los últimos N días.",
+    description="Retorna las marcaciones del trabajador autenticado en los últimos N días, agrupadas por fecha.",
 )
 async def historial(
     dias: int = Query(15, ge=1, le=90, description="Cantidad de días hacia atrás a consultar"),
     current_user: UsuarioReadWithRoles = Depends(get_current_active_user),
-) -> List[Dict[str, Optional[str]]]:
+):
     codigo_trabajador = _obtener_codigo_trabajador(current_user)
 
     try:

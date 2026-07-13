@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Dict, List, Optional
 
 
 class VerificarDispositivoResponse(BaseModel):
@@ -16,3 +16,9 @@ class MarcacionRemotaCreate(BaseModel):
     token_dispositivo: str
     latitud: float
     longitud: float
+
+
+class HistorialDiaResponse(BaseModel):
+    fecha: str
+    dia_semana: str
+    marcas: Dict[str, Optional[str]]
